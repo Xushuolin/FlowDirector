@@ -698,8 +698,16 @@ class WanT2V:
              window_size=11,
              decay_factor=0.1,
              tmd_window_size=11,
-             tmd_stride=8
+             tmd_stride=8,
+             edit_mode="edit",
+             use_target_mask=True,
+             preserve_unmasked=False
              ):
+        if edit_mode not in {"edit", "remove"}:
+            raise ValueError(f"Unsupported edit_mode: {edit_mode}")
+        if not 0 < worse_avg <= n_avg:
+            raise ValueError(f"Expected 0 < worse_avg <= n_avg, got worse_avg={worse_avg}, n_avg={n_avg}")
+
         # preprocess
         F = frame_num
         W, H = size
@@ -859,7 +867,7 @@ class WanT2V:
                                 
                                 sum_attn_mask += src_attn_mask
                                 
-                            if tar_attn_map is not None:
+                            if use_target_mask and tar_attn_map is not None:
                                 tar_attn_mask = self.create_binary_mask(tar_attn_map,
                                                                         n=window_size,
                                                                         pooling_mode='avg',
@@ -903,7 +911,9 @@ class WanT2V:
                     V_delta_final = V_delta_better + (omega - 1) * v_trend
                     V_delta_final = V_delta_final * v_mask
 
-                    zt_edit = zt_edit + (t_im1 - t_i) * V_delta_final                
+                    zt_edit = zt_edit + (t_im1 - t_i) * V_delta_final
+                    if preserve_unmasked:
+                        zt_edit = v_mask * zt_edit + (1.0 - v_mask) * x_src
                     
                 else:
                     # 使用tar进行采样
