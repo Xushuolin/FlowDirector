@@ -32,12 +32,16 @@ def cache_video(tensor,
     cache_file = osp.join('/tmp', rand_name(
         suffix=suffix)) if save_file is None else save_file
 
+    parent_dir = osp.dirname(cache_file)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
     # save to cache
     error = None
     for _ in range(retry):
         try:
             # preprocess
-            tensor = tensor.clamp(min(value_range), max(value_range))
+            tensor = tensor.float().clamp(min(value_range), max(value_range))
             tensor = torch.stack([
                 torchvision.utils.make_grid(
                     u, nrow=nrow, normalize=normalize, value_range=value_range)
@@ -73,11 +77,15 @@ def cache_image(tensor,
     ]:
         suffix = '.png'
 
+    parent_dir = osp.dirname(save_file)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
     # save to cache
     error = None
     for _ in range(retry):
         try:
-            tensor = tensor.clamp(min(value_range), max(value_range))
+            tensor = tensor.float().clamp(min(value_range), max(value_range))
             torchvision.utils.save_image(
                 tensor,
                 save_file,
