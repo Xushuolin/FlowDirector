@@ -44,9 +44,12 @@ def _validate_args(args):
     assert "t2v" in args.task, "remove.py currently supports text-to-video checkpoints only."
     assert args.source_video_path is not None, "Please specify --source_video_path for removal."
     assert args.source_prompt is not None, "Please specify --source_prompt describing the source video."
-    assert args.source_words is not None and args.source_words != "", "Please specify --source_words for the object to remove."
+    if args.mask_source != "external":
+        assert args.source_words is not None and args.source_words != "", "Please specify --source_words unless --mask_source is external."
     assert args.prompt is not None, "Please specify --prompt as the background/removal target prompt."
     assert 0 < args.worse_avg <= args.n_avg, "Please ensure 0 < --worse_avg <= --n_avg."
+    if args.mask_source in {"external", "union"}:
+        assert args.mask_video_path is not None, "Please specify --mask_video_path when --mask_source is external or union."
 
     # The default sampling steps are 40 for image-to-video tasks and 50 for text-to-video tasks.
     if args.sample_steps is None:
@@ -243,6 +246,27 @@ def _parse_args():
         default="",
         help="Unused for removal by default; kept for compatibility with edit.py.")
     parser.add_argument(
+        "--mask_video_path",
+        type=str,
+        default=None,
+        help="Optional external mask video. White pixels mark the region to remove/inpaint.")
+    parser.add_argument(
+        "--mask_source",
+        type=str,
+        default=None,
+        choices=["attention", "external", "union"],
+        help="Which mask to use: attention, external, or union. Defaults to external when --mask_video_path is set, otherwise attention.")
+    parser.add_argument(
+        "--mask_threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for binarizing the external mask video after resizing to latent resolution.")
+    parser.add_argument(
+        "--invert_mask",
+        action="store_true",
+        default=False,
+        help="Invert the external mask before thresholding; useful if black marks the object.")
+    parser.add_argument(
         "--window_size",
         type=int,
         default=13,
@@ -255,6 +279,8 @@ def _parse_args():
 
 
     args = parser.parse_args()
+    if args.mask_source is None:
+        args.mask_source = "external" if args.mask_video_path else "attention"
 
     _validate_args(args)
 
@@ -399,6 +425,10 @@ def remove(args):
             target_words=args.target_words,
             window_size=args.window_size,
             decay_factor=args.decay_factor,
+            mask_video_path=args.mask_video_path,
+            mask_source=args.mask_source,
+            mask_threshold=args.mask_threshold,
+            invert_mask=args.invert_mask,
             edit_mode="remove",
             use_target_mask=False,
             preserve_unmasked=True)

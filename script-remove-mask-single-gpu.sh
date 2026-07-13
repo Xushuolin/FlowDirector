@@ -1,0 +1,25 @@
+python remove.py \
+    --task t2v-1.3B \
+    --size 832*480 \
+    --base_seed 42 \
+    --ckpt_dir /root/autodl-tmp/Wan2.1-T2V-1.3B \
+    --sample_solver unipc \
+    --source_video_path video_list/bear_g.mp4 \
+    --mask_video_path masks/bear_g_mask.mp4 \
+    --mask_source external \
+    --mask_threshold 0.5 \
+    --source_prompt "A large brown bear is walking slowly across a rocky terrain in a zoo enclosure, surrounded by stone walls and scattered greenery. The camera remains fixed, capturing the bear's deliberate movements." \
+    --source_words "large brown bear" \
+    --prompt "An empty rocky terrain in a zoo enclosure, surrounded by stone walls and scattered greenery. The camera remains fixed, capturing the natural background with no animal." \
+    --sample_guide_scale 3.5 \
+    --tar_guide_scale 10.5 \
+    --sample_shift 12 \
+    --sample_steps 50 \
+    --n_max 40 \
+    --n_min 0 \
+    --n_avg 4 \
+    --worse_avg 2 \
+    --omega 2.0 \
+    --window_size 15 \
+    --decay_factor 0.25 \
+    --frame_num 41
