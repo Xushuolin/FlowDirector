@@ -313,6 +313,44 @@ class WanT2V:
         latents = self.vae.video_encode(frames_tensor)
         return latents # [C, F, H, W]
 
+    def load_mask_frames(self, mask_path, latent_shape, threshold=0.5, invert=False):
+        """
+        Load an external binary mask video and resize it to the latent video grid.
+
+        White / high-valued pixels indicate editable regions. The returned mask has
+        shape [C, F, H, W], matching the latent tensor shape.
+        """
+        C_latent, F_latent, H_latent, W_latent = latent_shape
+        cap = cv2.VideoCapture(mask_path)
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open mask video file: {mask_path}")
+
+        frames = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, (W_latent, H_latent), interpolation=cv2.INTER_AREA)
+            frames.append(torch.from_numpy(gray).float() / 255.0)
+
+        cap.release()
+        if not frames:
+            raise ValueError(f"No frames found in mask video: {mask_path}")
+
+        mask = torch.stack(frames).to(self.device)
+        mask = mask.unsqueeze(0).unsqueeze(0)  # [1, 1, T, H, W]
+        if mask.shape[2] != F_latent:
+            mask = F.interpolate(
+                mask,
+                size=(F_latent, H_latent, W_latent),
+                mode='trilinear',
+                align_corners=False)
+        if invert:
+            mask = 1.0 - mask
+        mask = (mask >= threshold).float().squeeze(0).squeeze(0)
+        return mask.unsqueeze(0).expand(C_latent, -1, -1, -1)
+
 
     def find_subtokens_range(self, source_tokens, target_tokens):
         """
@@ -698,8 +736,22 @@ class WanT2V:
              window_size=11,
              decay_factor=0.1,
              tmd_window_size=11,
-             tmd_stride=8
+             tmd_stride=8,
+             edit_mode="edit",
+             use_target_mask=True,
+             preserve_unmasked=False,
+             mask_video_path=None,
+             mask_source="attention",
+             mask_threshold=0.5,
+             invert_mask=False
              ):
+        if edit_mode not in {"edit", "remove"}:
+            raise ValueError(f"Unsupported edit_mode: {edit_mode}")
+        if not 0 < worse_avg <= n_avg:
+            raise ValueError(f"Expected 0 < worse_avg <= n_avg, got worse_avg={worse_avg}, n_avg={n_avg}")
+        if mask_source not in {"attention", "external", "union"}:
+            raise ValueError(f"Unsupported mask_source: {mask_source}")
+
         # preprocess
         F = frame_num
         W, H = size
@@ -718,6 +770,15 @@ class WanT2V:
         # 加载源视频潜在表示和参考图像
         x_src = self.load_video_frames(source_video_path, size=size)
         C_latent, F_latent, H_latent, W_latent = x_src.shape
+        external_mask = None
+        if mask_video_path is not None:
+            external_mask = self.load_mask_frames(
+                mask_video_path,
+                x_src.shape,
+                threshold=mask_threshold,
+                invert=invert_mask)
+        elif mask_source in {"external", "union"}:
+            raise ValueError(f"mask_source={mask_source} requires --mask_video_path")
 
         # Validate TMD parameters
         if tmd_window_size > F_latent:
@@ -859,7 +920,7 @@ class WanT2V:
                                 
                                 sum_attn_mask += src_attn_mask
                                 
-                            if tar_attn_map is not None:
+                            if use_target_mask and tar_attn_map is not None:
                                 tar_attn_mask = self.create_binary_mask(tar_attn_map,
                                                                         n=window_size,
                                                                         pooling_mode='avg',
@@ -869,6 +930,12 @@ class WanT2V:
                                 sum_attn_mask += tar_attn_mask
                                 
                             sum_attn_mask = torch.clamp(sum_attn_mask, min=0.0, max=1.0)
+                            if external_mask is not None:
+                                external_mask_w = external_mask[:, f_start:f_end, :, :]
+                                if mask_source == "external":
+                                    sum_attn_mask = external_mask_w
+                                elif mask_source == "union":
+                                    sum_attn_mask = torch.clamp(sum_attn_mask + external_mask_w, min=0.0, max=1.0)
                         
                             V_delta = noise_pred_tar_guided - noise_pred_src_guided
                             
@@ -903,7 +970,9 @@ class WanT2V:
                     V_delta_final = V_delta_better + (omega - 1) * v_trend
                     V_delta_final = V_delta_final * v_mask
 
-                    zt_edit = zt_edit + (t_im1 - t_i) * V_delta_final                
+                    zt_edit = zt_edit + (t_im1 - t_i) * V_delta_final
+                    if preserve_unmasked:
+                        zt_edit = v_mask * zt_edit + (1.0 - v_mask) * x_src
                     
                 else:
                     # 使用tar进行采样
